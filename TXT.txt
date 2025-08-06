@@ -1,0 +1,4 @@
+Giderler için ayrı bir veri tabanı yap ve depoya eklemeleri oraya sipariş gibi düş.
+Gelir ve Giderlerin Listelendiği bir sayfa hazırla.
+Fotoğraf eklemeyi düzelt Murat abiye sor ve blob olarak kaydetmek yerine veri yolu ile kaydet.
+Grafik oluşturmaya çalış ve İşletme Sayfası oluştur aylık/yıllık gelir gider en çok satan ürünleri listele.
