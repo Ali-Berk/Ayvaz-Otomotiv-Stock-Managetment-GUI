@@ -6,6 +6,10 @@ from pandastable import Table
 import requests
 import xml.etree.ElementTree as ET
 import os
+from PIL import Image, ImageTk
+from tkinter import filedialog
+from tkinter import Label
+import io
 
 # === ÖN AYARLAR ===
 url = "https://www.tcmb.gov.tr/kurlar/today.xml"
@@ -86,7 +90,7 @@ try:
 except Exception:
     cur_siparis.execute("SELECT kur FROM siparisler ORDER BY siparis_id DESC LIMIT 1")
     last_kur = cur_siparis.fetchone()
-    usd = last_kur[14]
+    usd = last_kur[0]
     messagebox.showwarning("Uyarı", "İnternet olmadığından EN SON SİPARİŞİN dolar kuru kullanıldı.")
 
 def Get():
@@ -133,7 +137,7 @@ def GetProduct():
             messagebox.showerror("Uyarı", "Ürün Grubu veya Ürün ID giriniz.")
             return
 
-        query = "SELECT * FROM urunler"
+        query = "SELECT urunid, urun_grubu, urun_model, fiyat, stok, ebat, agirlik, adet, renk FROM urunler"
         params = []
 
         if productID and not productGroup:
@@ -147,6 +151,7 @@ def GetProduct():
             params.extend([productID, productGroup])
 
         df_urun = pd.read_sql_query(query, conn_urun, params=params)
+        df_urun.drop(columns=["resim"], inplace=True)
 
         if df_urun.empty:
             messagebox.showinfo("Bilgi", "Ürün bulunamadı.")
@@ -332,7 +337,6 @@ def refresh_urun_table():
     table_urun2 = EditableTable(table_urun2.parentframe, dataframe=df_urun2, table_name="urunler", id_column="urunid", conn=conn_urun, showtoolbar=True, showstatusbar=True)
     table_urun2.show()
 
-
 def refresh_siparis_table():
     global table_siparis1
     df_siparis = pd.read_sql_query("SELECT * FROM siparisler", conn_siparis)
@@ -400,6 +404,8 @@ class EditableTable(Table):
             messagebox.showerror("Hata", str(e))
 
 def Add_stock():
+    global image_path
+    global imgbytes
     stock_id = entry_stock_id.get().strip()
     stock_group = entry_stock_group.get().strip()
     stock_model = entry_stock_model.get().strip()
@@ -407,7 +413,6 @@ def Add_stock():
     stock_mass = entry_stock_mass.get().strip()
     stock_cost = entry_stock_cost.get().strip()
     stock_price = entry_stock_price.get().strip()
-
    
 
     try:
@@ -423,7 +428,7 @@ def Add_stock():
             yeni_stok = sss[0] + stock_qty
             cursor.execute("""
                 UPDATE urunler 
-                SET stok = ? WHERE urunid = ? """, (yeni_stok,stock_id))
+                SET resim = ? ,stok = ? WHERE urunid = ? """, (imgbytes,yeni_stok,stock_id))
             conn_urun.commit()
             messagebox.showinfo("Başarılı", f"Stok güncellendi. Yeni stok: {yeni_stok}") 
         
@@ -434,11 +439,13 @@ def Add_stock():
             # Yeni ürün ekle
             fiyat = float(stock_price)
             cursor.execute("""
-                INSERT INTO urunler (urunid, urun_grubu, urun_model, stok, agirlik, adet, fiyat)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
-            """, (stock_id, stock_group, stock_model, stock_qty, stock_mass, stock_qty, fiyat))
+                INSERT INTO urunler (urunid, urun_grubu, urun_model, stok, agirlik, adet, fiyat, resim)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (stock_id, stock_group, stock_model, stock_qty, stock_mass, stock_qty, fiyat, imgbytes))
             conn_urun.commit()
             messagebox.showinfo("Başarılı", "Yeni ürün eklendi.")
+            if not image_path:
+                messagebox.showwarning("Uyarı", "Resim seçilmedi, lütfen resim ekleyiniz.")
 
     except ValueError:
         messagebox.showerror("Hata", "Lütfen stok ve fiyat değerlerini doğru giriniz.")
@@ -456,6 +463,42 @@ def Add_stock():
 
 def on_text_change(*args):
     active_num.config(text=f"AKTİF NUMARA: {phone_var.get()}")
+
+imgbytes = None
+image_path = None
+def img_to_bytes():
+    global image_path
+    global imgbytes
+    image_path = filedialog.askopenfilename(title="Resim Seç", filetypes=[("Image files", "*.jpg *.jpeg *.png")])
+    with open(image_path, "rb") as img_file:
+        imgbytes =  img_file.read()
+
+#Seçili satırı al> event ile seçim değiştiğinde çağır>label configden resmi güncelle.
+def on_row_selected(event):
+    global resim, photo
+    selected_row = table_urun2.getSelectedRow()
+    if selected_row is not None:
+        df_selected = table_urun2.model.df.iloc[selected_row]
+        urunid = df_selected["urunid"]
+        resim = cursor.execute("SELECT resim FROM urunler WHERE urunid = ?", (urunid,)).fetchone()
+        if resim and resim[0]:
+            try:
+                img = Image.open(io.BytesIO(resim[0]))
+                
+                photo = ImageTk.PhotoImage(img)
+                image_box.config(image=photo)
+                image_box.image = photo
+                print("denedi")
+            except Exception as e:
+                print(f"Gösterim sırasında hata {e}")
+                image_box.config(image='',text="",bg="white")
+        else:
+            print("ife girmedi")
+            image_box.config(image='', text="", bg="white")
+
+
+
+    
 # === ANA EKRAN ===
 root = tk.Tk()
 root.title("Müşteri / Sipariş Yönetim Sistemi")
@@ -569,12 +612,17 @@ btn_get2.grid(row=7, column=0, columnspan=2, pady=10)
 btn_add = tk.Button(frame2_left, text="Seçili Müşteriye Siparişi Ekle", width=25, bg="#4CAF50", fg="white", command=Add)
 btn_add.grid(row=8, column=0, columnspan=2, pady=10)
 
+image_box = tk.Label(frame2_left, text="Resim", bg="#4CAF50", width=50,height=20)
+image_box.grid(row=9, column=0, columnspan=2, rowspan=1, pady=10)
+
 # Ürün tablosu sağda
 frame2_table = tk.Frame(frame2)
 frame2_table.pack(side="right", fill="both", expand=True)
 df_urun = pd.read_sql_query("SELECT * FROM urunler", conn_urun)
+df_urun.drop(columns=["resim"], inplace=True)
 table_urun2 = Table(frame2_table, dataframe=df_urun, showtoolbar=True, showstatusbar=True)
 table_urun2.show()
+table_urun2.bind("<ButtonRelease-1>", on_row_selected)
 
 # === FRAME3: DEPO GİRİŞ ===
 tk.Label(frame3, text="Ürün ID:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
@@ -589,12 +637,9 @@ tk.Label(frame3, text="Ürün Model:").grid(row=2, column=0, sticky="w", padx=5,
 entry_stock_model = tk.Entry(frame3, width=30)
 entry_stock_model.grid(row=2, column=1, padx=10, pady=5)
 
-
-
 tk.Label(frame3, text="Ağırlık:").grid(row=0, column=2, sticky="w", padx=5, pady=5)
 entry_stock_mass = tk.Entry(frame3, width=30)
 entry_stock_mass.grid(row=0, column=3, padx=10, pady=5)
-
 
 tk.Label(frame3, text="Geliş Fiyatı TL:").grid(row=1, column=2, sticky="w", padx=5, pady=5)
 entry_stock_tl = tk.Entry(frame3, width=30)
@@ -617,6 +662,10 @@ tk.Label(frame3, text="Satış Fiyatı TL:").grid(row=2, column=4, sticky="w", p
 entry_stock_price = tk.Entry(frame3, width=30)
 entry_stock_price.grid(row=2, column=5, padx=10, pady=5)
 
+btn_choose_img = tk.Button(frame3, text="Resim Seç",width=20, bg="#4CAF50", fg="white", command=img_to_bytes)
+btn_choose_img.grid(row=0, column=6, padx=10, pady=10)
+
+
 btn_add_stock = tk.Button(frame3,text="Stok girişini yap",width=20,bg="#4CAF50",fg="white",command=Add_stock)
 btn_add_stock.grid(row=4,column=0,padx=10,pady=10)
 
@@ -638,8 +687,11 @@ table_siparis.show()
 frame6_table = tk.Frame(frame6)
 frame6_table.pack(fill="both", expand=True)
 df_urun = pd.read_sql_query("SELECT * FROM urunler", conn_urun)
+df_urun.drop(columns=["resim"], inplace=True)
 table_urun = EditableTable(frame6_table, dataframe=df_urun, table_name="urunler", id_column="urunid", conn=conn_urun, showtoolbar=True, showstatusbar=True)
 table_urun.show()
 phone_var.trace("w", on_text_change)
+
+resim = cursor.execute("SELECT resim FROM urunler WHERE urunid = 'U008'").fetchone()
 
 root.mainloop()
