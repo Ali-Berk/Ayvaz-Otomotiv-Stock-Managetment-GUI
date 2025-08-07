@@ -35,7 +35,7 @@ cursor.execute("""
     urun_model TEXT,
     fiyat REAL,
     stok INTEGER,
-    resim BLOB,
+    resim TEXT,
     ebat TEXT,
     agirlik TEXT,
     adet INTEGER,
@@ -151,7 +151,7 @@ def GetProduct():
             params.extend([productID, productGroup])
 
         df_urun = pd.read_sql_query(query, conn_urun, params=params)
-        df_urun.drop(columns=["resim"], inplace=True)
+        #df_urun.drop(columns=["resim"], inplace=True)
 
         if df_urun.empty:
             messagebox.showinfo("Bilgi", "Ürün bulunamadı.")
@@ -405,7 +405,6 @@ class EditableTable(Table):
 
 def Add_stock():
     global image_path
-    global imgbytes
     stock_id = entry_stock_id.get().strip()
     stock_group = entry_stock_group.get().strip()
     stock_model = entry_stock_model.get().strip()
@@ -413,7 +412,7 @@ def Add_stock():
     stock_mass = entry_stock_mass.get().strip()
     stock_cost = entry_stock_cost.get().strip()
     stock_price = entry_stock_price.get().strip()
-   
+    
 
     try:
         stock_qty = int(stock_qty)
@@ -428,7 +427,7 @@ def Add_stock():
             yeni_stok = sss[0] + stock_qty
             cursor.execute("""
                 UPDATE urunler 
-                SET resim = ? ,stok = ? WHERE urunid = ? """, (imgbytes,yeni_stok,stock_id))
+                SET resim = ? ,stok = ? WHERE urunid = ? """, (image_path,yeni_stok,stock_id))
             conn_urun.commit()
             messagebox.showinfo("Başarılı", f"Stok güncellendi. Yeni stok: {yeni_stok}") 
         
@@ -441,7 +440,7 @@ def Add_stock():
             cursor.execute("""
                 INSERT INTO urunler (urunid, urun_grubu, urun_model, stok, agirlik, adet, fiyat, resim)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (stock_id, stock_group, stock_model, stock_qty, stock_mass, stock_qty, fiyat, imgbytes))
+            """, (stock_id, stock_group, stock_model, stock_qty, stock_mass, stock_qty, fiyat, image_path))
             conn_urun.commit()
             messagebox.showinfo("Başarılı", "Yeni ürün eklendi.")
             if not image_path:
@@ -464,40 +463,38 @@ def Add_stock():
 def on_text_change(*args):
     active_num.config(text=f"AKTİF NUMARA: {phone_var.get()}")
 
-imgbytes = None
 image_path = None
 def img_to_bytes():
     global image_path
-    global imgbytes
     image_path = filedialog.askopenfilename(title="Resim Seç", filetypes=[("Image files", "*.jpg *.jpeg *.png")])
-    with open(image_path, "rb") as img_file:
-        imgbytes =  img_file.read()
-
 #Seçili satırı al> event ile seçim değiştiğinde çağır>label configden resmi güncelle.
 def on_row_selected(event):
-    global resim, photo
     selected_row = table_urun2.getSelectedRow()
     if selected_row is not None:
         df_selected = table_urun2.model.df.iloc[selected_row]
         urunid = df_selected["urunid"]
-        resim = cursor.execute("SELECT resim FROM urunler WHERE urunid = ?", (urunid,)).fetchone()
-        if resim and resim[0]:
+
+        result = cursor.execute("SELECT resim FROM urunler WHERE urunid = ?", (urunid,)).fetchone()
+        if result and result[0]:
+            image_path = result[0]
+            print(f"Yüklenen resim yolu: {image_path}")
+
             try:
-                img = Image.open(io.BytesIO(resim[0]))
-                
+                img = Image.open(image_path)
+                img = img.resize((200, 200), Image.Resampling.LANCZOS)
                 photo = ImageTk.PhotoImage(img)
-                image_box.config(image=photo)
-                image_box.image = photo
-                print("denedi")
+                image_box.config(image=photo, height=200, width=200)
+                image_box.image = photo  # REFERANS tutulmalı!
+            except FileNotFoundError:
+                print("❌ Resim dosyası bulunamadı.")
+                image_box.config(image='', text="Resim bulunamadı", bg="white")
             except Exception as e:
-                print(f"Gösterim sırasında hata {e}")
-                image_box.config(image='',text="",bg="white")
-        else:
-            print("ife girmedi")
-            image_box.config(image='', text="", bg="white")
+                print(f"❌ Resim yüklenirken hata: {e}")
+                image_box.config(image='', text="Hata oluştu", bg="white")
 
 
-
+a = cursor.execute("SELECT resim FROM urunler WHERE urunid = 'U001'").fetchone()
+print(a)
     
 # === ANA EKRAN ===
 root = tk.Tk()
@@ -612,9 +609,8 @@ btn_get2.grid(row=7, column=0, columnspan=2, pady=10)
 btn_add = tk.Button(frame2_left, text="Seçili Müşteriye Siparişi Ekle", width=25, bg="#4CAF50", fg="white", command=Add)
 btn_add.grid(row=8, column=0, columnspan=2, pady=10)
 
-image_box = tk.Label(frame2_left, text="Resim", bg="#4CAF50", width=50,height=20)
-image_box.grid(row=9, column=0, columnspan=2, rowspan=1, pady=10)
-
+image_box = tk.Label(frame2_left, width=50,height=50)
+image_box.grid(row=9, column=0, columnspan=2, pady=10)
 # Ürün tablosu sağda
 frame2_table = tk.Frame(frame2)
 frame2_table.pack(side="right", fill="both", expand=True)
