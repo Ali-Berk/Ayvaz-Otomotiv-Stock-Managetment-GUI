@@ -10,7 +10,10 @@ from PIL import Image, ImageTk
 from tkinter import filedialog
 from tkinter import Label
 import io
-
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas 
+from reportlab.pdfbase.ttfonts import TTFont
+from reportlab.pdfbase import pdfmetrics
 # === ÖN AYARLAR ===
 url = "https://www.tcmb.gov.tr/kurlar/today.xml"
 base_path = os.path.dirname(os.path.abspath(__file__))
@@ -492,6 +495,80 @@ def on_row_selected(event):
                 print(f"❌ Resim yüklenirken hata: {e}")
                 image_box.config(image='', text="Hata oluştu", bg="white")
 
+def cargoBill():
+    selected_customer = table_siparis1.getSelectedRow()
+
+    if selected_customer is None:
+        messagebox.showwarning("Uyarı", "Lütfen bir sipariş seçiniz.")
+        return
+
+    df_Selected = table_siparis1.model.df.iloc[selected_customer].to_list()
+    print(f"df selected: {df_Selected[0]}")
+    siparis_id = int(df_Selected[0])
+    result = cur_siparis.execute("SELECT * FROM siparisler WHERE siparis_id = ?", (siparis_id,)).fetchone()
+    if result is None:
+        messagebox.showerror("Hata", "Sipariş bulunamadı.")
+        return
+
+    telefon = result[1]
+
+    customer_info = cur_musteri.execute("SELECT * FROM musteriler WHERE telefon = ?", (telefon,)).fetchone()
+    if customer_info is None:
+        messagebox.showerror("Hata", f"Telefon {telefon} ile müşteri bulunamadı.")
+        return
+
+    musteri_ad = customer_info[2] 
+    musteri_soyad = customer_info[3]  
+    musteri_adres = f"{customer_info[5]} {customer_info[4]} {customer_info[6]}" 
+    musteri_tel = customer_info[1] 
+
+    new_Form = tk.Toplevel(root)
+    new_Form.title("Kargo Fişi")
+    new_Form.geometry("700x500")
+    new_Form.configure(bg="white")
+    container = tk.Frame(new_Form,bg="white")
+    container.pack(fill="both",expand=True)
+    tk.Label(container, text="Adı Soyadı:", bg="white", font=("Arial", 20 )).grid(row=0, column=0, sticky="w")
+    tk.Label(container, text=f"{musteri_ad} {musteri_soyad}", bg="white", font=("Arial", 20, "bold")).grid(row=0, column=1, sticky="w")
+    tk.Label(container, text="İşletme:", bg="white", font=("Arial", 20)).grid(row=1, column=0, sticky="w")
+
+    tk.Label(container, text="Adres:", bg="white", font=("Arial", 20)).grid(row=2, column=0, sticky="w")
+    tk.Label(container, text=musteri_adres, bg="white", font=("Arial", 16)).grid(row=2, column=1, sticky="w")
+
+    tk.Label(container, text="Telefon:", bg="white", font=("Arial", 20)).grid(row=3, column=0, sticky="w")
+    tk.Label(container, text=musteri_tel, bg="white", font=("Arial", 20, "bold")).grid(row=3, column=1, sticky="w")
+
+    tk.Label(container, text="Ürün:", bg="white", font=("Arial", 20)).grid(row=4, column=0, sticky="w")
+    tk.Label(container, text=result[5], bg="white", font=("Arial", 20)).grid(row=4, column=1, sticky="w")
+
+    tk.Button(new_Form, text="Yazdır", bg="#4CAF50", fg="white", font=("Arial", 16), command=lambda: print_cargo_bill(container)).pack(pady=20)
+
+def print_cargo_bill(window):
+    try:
+        font_path = os.path.join(base_path, "fonts","arial.ttf")
+        font_path2 = os.path.join(base_path, "fonts","arial-bold.ttf")
+        pdfmetrics.registerFont(TTFont("Arial", font_path))
+        pdfmetrics.registerFont(TTFont("Arial-Bold", font_path2))
+        pdf_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")])
+        if not pdf_path:
+            return
+
+        c = canvas.Canvas(pdf_path, pagesize=A4)
+        width, height = A4
+
+        y_position = height - 50
+        for widget in window.winfo_children():
+            if isinstance(widget, tk.Label):
+                text = widget.cget("text")
+                c.setFont("Arial", 20)
+                c.drawString(50, y_position, text)
+                y_position -= 20
+
+        c.showPage()
+        c.save()
+        messagebox.showinfo("Başarılı", f"Kargo fişi '{pdf_path}' olarak kaydedildi.")
+    except Exception as e:
+        messagebox.showerror("Hata", str(e))
 
 a = cursor.execute("SELECT resim FROM urunler WHERE urunid = 'U001'").fetchone()
 print(a)
@@ -518,6 +595,8 @@ notebook.add(frame3, text="Depo Giriş")
 notebook.add(frame4, text="Müşteri Listesi")
 notebook.add(frame5, text="Sipariş Listesi")
 notebook.add(frame6, text="Ürün Listesi")
+
+form_container = tk.Frame(root)
 
 # === FRAME1: MÜŞTERİ SİPARİŞ KONTROL ===
 frame_left = tk.Frame(frame1, padx=10, pady=10)
@@ -562,6 +641,10 @@ btn_get.grid(row=8, column=0, columnspan=2, pady=10)
 
 btn_deleteOrder = tk.Button(frame_left, text="Seçili siparişi sil", width=20, bg="#4CAF50", fg="white", command=Delete)
 btn_deleteOrder.grid(row=9, column=0, columnspan=2, pady=10)
+
+btn_cargoBill = tk.Button(frame_left, text="Kargo Fişi Yazdır",width=20,bg="#4CAF50",fg="white")
+btn_cargoBill.grid(row=10, columnspan=2)
+btn_cargoBill.config(command=cargoBill)
 
 # Sipariş tablosu sağda
 frame_right = tk.Frame(frame1)
@@ -661,7 +744,6 @@ entry_stock_price.grid(row=2, column=5, padx=10, pady=5)
 btn_choose_img = tk.Button(frame3, text="Resim Seç",width=20, bg="#4CAF50", fg="white", command=img_to_bytes)
 btn_choose_img.grid(row=0, column=6, padx=10, pady=10)
 
-
 btn_add_stock = tk.Button(frame3,text="Stok girişini yap",width=20,bg="#4CAF50",fg="white",command=Add_stock)
 btn_add_stock.grid(row=4,column=0,padx=10,pady=10)
 
@@ -688,6 +770,5 @@ table_urun = EditableTable(frame6_table, dataframe=df_urun, table_name="urunler"
 table_urun.show()
 phone_var.trace("w", on_text_change)
 
-resim = cursor.execute("SELECT resim FROM urunler WHERE urunid = 'U008'").fetchone()
 
 root.mainloop()
