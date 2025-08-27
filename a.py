@@ -10,10 +10,8 @@ from PIL import Image, ImageTk
 from tkinter import filedialog
 from tkinter import Label
 import io
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas 
-from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.pdfbase import pdfmetrics
+from fpdf import FPDF 
+
 # === ÖN AYARLAR ===
 url = "https://www.tcmb.gov.tr/kurlar/today.xml"
 base_path = os.path.dirname(os.path.abspath(__file__))
@@ -480,7 +478,6 @@ def on_row_selected(event):
         result = cursor.execute("SELECT resim FROM urunler WHERE urunid = ?", (urunid,)).fetchone()
         if result and result[0]:
             image_path = result[0]
-            print(f"Yüklenen resim yolu: {image_path}")
 
             try:
                 img = Image.open(image_path)
@@ -489,10 +486,8 @@ def on_row_selected(event):
                 image_box.config(image=photo, height=200, width=200)
                 image_box.image = photo  # REFERANS tutulmalı!
             except FileNotFoundError:
-                print("❌ Resim dosyası bulunamadı.")
                 image_box.config(image='', text="Resim bulunamadı", bg="white")
             except Exception as e:
-                print(f"❌ Resim yüklenirken hata: {e}")
                 image_box.config(image='', text="Hata oluştu", bg="white")
 
 def cargoBill():
@@ -503,7 +498,6 @@ def cargoBill():
         return
 
     df_Selected = table_siparis1.model.df.iloc[selected_customer].to_list()
-    print(f"df selected: {df_Selected[0]}")
     siparis_id = int(df_Selected[0])
     result = cur_siparis.execute("SELECT * FROM siparisler WHERE siparis_id = ?", (siparis_id,)).fetchone()
     if result is None:
@@ -521,7 +515,9 @@ def cargoBill():
     musteri_soyad = customer_info[3]  
     musteri_adres = f"{customer_info[5]} {customer_info[4]} {customer_info[6]}" 
     musteri_tel = customer_info[1] 
-
+    urun_resmi = cursor.execute("SELECT resim FROM urunler WHERE urunid = ?", (result[4],)).fetchone()
+    print(f"ürün resmi: {urun_resmi}")
+    print(type(urun_resmi))
     new_Form = tk.Toplevel(root)
     new_Form.title("Kargo Fişi")
     new_Form.geometry("700x500")
@@ -541,37 +537,32 @@ def cargoBill():
     tk.Label(container, text="Ürün:", bg="white", font=("Arial", 20)).grid(row=4, column=0, sticky="w")
     tk.Label(container, text=result[5], bg="white", font=("Arial", 20)).grid(row=4, column=1, sticky="w")
 
-    tk.Button(new_Form, text="Yazdır", bg="#4CAF50", fg="white", font=("Arial", 16), command=lambda: print_cargo_bill(container)).pack(pady=20)
+    tk.Button(new_Form, text="Yazdır", bg="#4CAF50", fg="white", font=("Arial", 16), command=lambda: print_cargo_bill(musteri_ad, musteri_soyad, musteri_adres, musteri_tel, result[5], urun_resmi)).pack(pady=20)
 
-def print_cargo_bill(window):
+def print_cargo_bill(musteri_ad, musteri_soyad, musteri_adres, musteri_tel, urun, urun_resmi):
     try:
-        font_path = os.path.join(base_path, "fonts","arial.ttf")
-        font_path2 = os.path.join(base_path, "fonts","arial-bold.ttf")
-        pdfmetrics.registerFont(TTFont("Arial", font_path))
-        pdfmetrics.registerFont(TTFont("Arial-Bold", font_path2))
-        pdf_path = filedialog.asksaveasfilename(defaultextension=".pdf", filetypes=[("PDF files", "*.pdf")])
-        if not pdf_path:
-            return
+        
+        pdf = FPDF("p", "mm", "A4")
+        pdf.add_page()
+        pdf.add_font("Arial", "", f"{base_path}/fonts/arial.ttf", uni=True)
+        pdf.add_font("Arial", "B", f"{base_path}/fonts/Arial-bold.ttf", uni=True)
+        pdf.set_font("Arial", size=20)
+        pdf.cell(0,10,"Ayvaz Otomotiv", align="C", ln=1)
+        pdf.cell(40,10,"AD SOYAD:", align="L")
+        pdf.cell(0,10,f"{musteri_ad} {musteri_soyad}", align="L", ln=1)
+        pdf.cell(40,10,"ADRES:", align="L")
+        pdf.cell(0,10,f"{musteri_adres}", align="L", ln=1)
+        pdf.cell(40,10,"TELEFON:", align="L")
+        pdf.cell(0,10,f"{musteri_tel}", align="L", ln=1)
+        pdf.cell(40,10,"ÜRÜN:", align="L")
+        pdf.cell(0,10,f"{urun}", align="L", ln=1)
+        if urun_resmi[0] != None:
+            pdf.image(f"{urun_resmi[0]}")
+        pdf.output("deneme.pdf")
 
-        c = canvas.Canvas(pdf_path, pagesize=A4)
-        width, height = A4
-
-        y_position = height - 50
-        for widget in window.winfo_children():
-            if isinstance(widget, tk.Label):
-                text = widget.cget("text")
-                c.setFont("Arial", 20)
-                c.drawString(50, y_position, text)
-                y_position -= 20
-
-        c.showPage()
-        c.save()
-        messagebox.showinfo("Başarılı", f"Kargo fişi '{pdf_path}' olarak kaydedildi.")
     except Exception as e:
         messagebox.showerror("Hata", str(e))
 
-a = cursor.execute("SELECT resim FROM urunler WHERE urunid = 'U001'").fetchone()
-print(a)
     
 # === ANA EKRAN ===
 root = tk.Tk()
