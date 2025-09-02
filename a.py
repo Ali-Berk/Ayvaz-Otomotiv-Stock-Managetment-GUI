@@ -365,21 +365,6 @@ def update_districts(event):
     combo_district["values"] = filtered_districts
     combo_district.set("")
 
-class MusteriTable(Table):
-    def handleCellEntry(self, row, col):
-        super().handleCellEntry(row, col)
-        try:
-            new_value = self.model.getValueAt(row, col)
-            col_name = self.model.df.columns[col]
-            musteri_id = int(self.model.df.iloc[row]["musteri_id"])
-            cur_musteri.execute(f"UPDATE musteriler SET {col_name} = ? WHERE musteri_id = ?", (new_value, musteri_id,))
-            
-
-            conn_musteri.commit()
-            messagebox.showinfo("Başarılı", "Müşteri bilgisi güncellendi.")
-        except Exception as e:
-            messagebox.showerror("Hata", str(e))
-
 class EditableTable(Table):
     def __init__(self, parent=None, dataframe=None, table_name=None, id_column=None, conn=None, **kwargs):
         Table.__init__(self, parent=parent, dataframe=dataframe, **kwargs)
@@ -391,6 +376,13 @@ class EditableTable(Table):
         super().handleCellEntry(row, col)
         try:
             new_value = self.model.getValueAt(row, col)
+            try:
+                new_value = int(new_value)
+            except:
+                new_value = float(new_value)
+            finally:
+                new_value = str(new_value)
+                       
             col_name = self.model.df.columns[col]
             try:
                 record_id = int(self.model.df.iloc[row][self.id_column])
@@ -478,7 +470,6 @@ def on_row_selected(event):
         result = cursor.execute("SELECT resim FROM urunler WHERE urunid = ?", (urunid,)).fetchone()
         if result and result[0]:
             image_path = result[0]
-
             try:
                 img = Image.open(image_path)
                 img = img.resize((200, 200), Image.Resampling.LANCZOS)
@@ -489,6 +480,8 @@ def on_row_selected(event):
                 image_box.config(image='', text="Resim bulunamadı", bg="white")
             except Exception as e:
                 image_box.config(image='', text="Hata oluştu", bg="white")
+        else:
+            image_box.config(image='',text="Resim bulunamadı", bg="white", height=25, width=25)
 
 def cargoBill():
     selected_customer = table_siparis1.getSelectedRow()
@@ -690,7 +683,7 @@ frame2_table = tk.Frame(frame2)
 frame2_table.pack(side="right", fill="both", expand=True)
 df_urun = pd.read_sql_query("SELECT * FROM urunler", conn_urun)
 df_urun.drop(columns=["resim"], inplace=True)
-table_urun2 = Table(frame2_table, dataframe=df_urun, showtoolbar=True, showstatusbar=True)
+table_urun2 = EditableTable(frame2_table, dataframe=df_urun, table_name="urunler", id_column="urunid", conn=conn_urun ,showtoolbar=True, showstatusbar=True)
 table_urun2.show()
 table_urun2.bind("<ButtonRelease-1>", on_row_selected)
 
