@@ -11,6 +11,8 @@ from tkinter import filedialog
 from tkinter import Label
 import io
 from fpdf import FPDF 
+import datetime
+from datetime import datetime
 
 # === ÖN AYARLAR ===
 url = "https://www.tcmb.gov.tr/kurlar/today.xml"
@@ -39,7 +41,7 @@ cursor.execute("""
     resim TEXT,
     ebat TEXT,
     agirlik TEXT,
-    adet INTEGER,
+    sonstoktarihi DATE,
     renk TEXT)
     """)
 conn_urun.commit()
@@ -76,6 +78,7 @@ CREATE TABLE IF NOT EXISTS siparisler (
     kur REAL,
     tutar REAL,
     onay BOOL,
+    fatura_no TEXT,
     FOREIGN KEY (telefon) REFERENCES musteriler(telefon),
     FOREIGN KEY (urun_id) REFERENCES urunler(urunid))
 """)
@@ -131,14 +134,14 @@ frame2_table = None
 def GetProduct():
     global table_urun2
     try:
-        productGroup = entry_productGroup.get().strip().capitalize()
+        productGroup = entry_productGroup.get().strip()
         productID = entry_productID.get().strip()
 
         if not productID and not productGroup:
             messagebox.showerror("Uyarı", "Ürün Grubu veya Ürün ID giriniz.")
             return
 
-        query = "SELECT urunid, urun_grubu, urun_model, fiyat, stok, ebat, agirlik, adet, renk FROM urunler"
+        query = "SELECT urunid, urun_grubu, urun_model, fiyat, stok, ebat, agirlik, renk FROM urunler"
         params = []
 
         if productID and not productGroup:
@@ -152,7 +155,6 @@ def GetProduct():
             params.extend([productID, productGroup])
 
         df_urun = pd.read_sql_query(query, conn_urun, params=params)
-        #df_urun.drop(columns=["resim"], inplace=True)
 
         if df_urun.empty:
             messagebox.showinfo("Bilgi", "Ürün bulunamadı.")
@@ -165,7 +167,7 @@ def GetProduct():
 
         table_urun2 = Table(frame2_table, dataframe=df_urun, showtoolbar=True, showstatusbar=True)
         table_urun2.show()
-        refresh_all_tables()
+        
     except sqlite3.Error as e:
         messagebox.showerror("Veritabanı Hatası", str(e))
     except Exception as e:
@@ -378,9 +380,7 @@ class EditableTable(Table):
             new_value = self.model.getValueAt(row, col)
             try:
                 new_value = int(new_value)
-            except:
-                new_value = float(new_value)
-            finally:
+            except ValueError:
                 new_value = str(new_value)
                        
             col_name = self.model.df.columns[col]
@@ -405,39 +405,65 @@ def Add_stock():
     stock_mass = entry_stock_mass.get().strip()
     stock_cost = entry_stock_cost.get().strip()
     stock_price = entry_stock_price.get().strip()
-    
+    date = datetime.now().date()
 
     try:
-        stock_qty = int(stock_qty)
-        
+        # Stok integer olsun
+        stock_qty = int(stock_qty) if stock_qty else 0
 
         # Ürün var mı kontrol et
-        cursor.execute("SELECT stok FROM urunler WHERE urunid = ?", (stock_id,))
-        sss = cursor.fetchone()
+        cursor.execute("SELECT * FROM urunler WHERE urunid = ?", (stock_id,))
+        eski_kayit = cursor.fetchone()
 
-        if sss:
-            # Mevcut stok üzerine ekle
-            yeni_stok = sss[0] + stock_qty
-            cursor.execute("""
-                UPDATE urunler 
-                SET resim = ? ,stok = ? WHERE urunid = ? """, (image_path,yeni_stok,stock_id))
+        if eski_kayit:
+            # Tablo kolonlarının sırasını öğrenelim
+            kolonlar = [desc[0] for desc in cursor.description]
+            eski_veri = dict(zip(kolonlar, eski_kayit))
+
+            # Kullanıcıdan gelen veriler (boş olabilir)
+            yeni_veri = {
+                "urunid": stock_id,
+                "urun_grubu": stock_group,
+                "urun_model": stock_model,
+                "stok": (eski_veri["stok"] + stock_qty) if stock_qty else eski_veri["stok"],
+                "agirlik": stock_mass,
+                "fiyat": float(stock_price) if stock_price else eski_veri["fiyat"],
+                "resim": image_path,
+                "sonstoktarihi": date
+            }
+
+            # Boş gelenleri eski verilerle doldur
+            for kolon, deger in yeni_veri.items():
+                if not deger:  # "" veya None ise
+                    yeni_veri[kolon] = eski_veri[kolon]
+
+            # Güncelleme sorgusu
+            cursor.execute(f"""
+                UPDATE urunler
+                SET urun_grubu=?, urun_model=?, stok=?, agirlik=?, fiyat=?, resim=?, sonstoktarihi=?
+                WHERE urunid=?
+            """, (
+                yeni_veri["urun_grubu"],
+                yeni_veri["urun_model"],
+                yeni_veri["stok"],
+                yeni_veri["agirlik"],
+                yeni_veri["fiyat"],
+                yeni_veri["resim"],
+                yeni_veri["sonstoktarihi"],
+                yeni_veri["urunid"]
+            ))
             conn_urun.commit()
-            messagebox.showinfo("Başarılı", f"Stok güncellendi. Yeni stok: {yeni_stok}") 
-        
-        if not stock_id or not stock_group or not stock_model or not stock_qty:
-            messagebox.showwarning("Uyarı", "Ürün ID, Grubu ve Modeli zorunludur.")
-            return
+            messagebox.showinfo("Başarılı", f"Stok güncellendi. Yeni stok: {yeni_veri['stok']}")
+
         else:
             # Yeni ürün ekle
-            fiyat = float(stock_price)
+            fiyat = float(stock_price) if stock_price else 0.0
             cursor.execute("""
-                INSERT INTO urunler (urunid, urun_grubu, urun_model, stok, agirlik, adet, fiyat, resim)
+                INSERT INTO urunler (urunid, urun_grubu, urun_model, stok, agirlik, fiyat, resim, sonstoktarihi)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (stock_id, stock_group, stock_model, stock_qty, stock_mass, stock_qty, fiyat, image_path))
+            """, (stock_id, stock_group, stock_model, stock_qty, stock_mass, fiyat, image_path, date))
             conn_urun.commit()
             messagebox.showinfo("Başarılı", "Yeni ürün eklendi.")
-            if not image_path:
-                messagebox.showwarning("Uyarı", "Resim seçilmedi, lütfen resim ekleyiniz.")
 
     except ValueError:
         messagebox.showerror("Hata", "Lütfen stok ve fiyat değerlerini doğru giriniz.")
@@ -452,6 +478,7 @@ def Add_stock():
         entry_stock_cost.delete(0, tk.END)
         entry_stock_price.delete(0, tk.END)
         refresh_all_tables()
+
 
 def on_text_change(*args):
     active_num.config(text=f"AKTİF NUMARA: {phone_var.get()}")
@@ -509,8 +536,6 @@ def cargoBill():
     musteri_adres = f"{customer_info[5]} {customer_info[4]} {customer_info[6]}" 
     musteri_tel = customer_info[1] 
     urun_resmi = cursor.execute("SELECT resim FROM urunler WHERE urunid = ?", (result[4],)).fetchone()
-    print(f"ürün resmi: {urun_resmi}")
-    print(type(urun_resmi))
     new_Form = tk.Toplevel(root)
     new_Form.title("Kargo Fişi")
     new_Form.geometry("700x500")
@@ -556,22 +581,67 @@ def print_cargo_bill(musteri_ad, musteri_soyad, musteri_adres, musteri_tel, urun
     except Exception as e:
         messagebox.showerror("Hata", str(e))
 
-    
+def run_query():
+    sql = sql_entry.get("1.0", tk.END).strip()
+    if not sql:
+        messagebox.showwarning("Uyarı", "Lütfen bir SQL sorgusu giriniz.")
+        return
+    selected_db = sql_combo.get()
+    db_path = databases[selected_db]
+
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        cursor.execute(sql)
+        
+        if sql.lower().startswith("select"):
+            rows = cursor.fetchall()
+            cols = [desc[0] for desc in cursor.description]
+
+            tree.delete(*tree.get_children())
+            tree["column"] = cols
+
+            for col in cols:
+                tree.heading(col, text=col)
+                tree.column(col, width=120)
+
+                for row in rows:
+                    tree.insert("", tk.END, values=row)
+
+            else:
+                conn.commit()
+                messagebox.showinfo("Başarılı", f"{selected_db} veritabanında sorgu çalıştırıldı.")
+
+            conn.close()
+
+    except Exception as e:
+        messagebox.showerror("SQL Hatası", str(e))
 # === ANA EKRAN ===
 root = tk.Tk()
 root.title("Müşteri / Sipariş Yönetim Sistemi")
 root.geometry("1500x800")
+root.configure(bg="#f5f5f5")
+
+style = ttk.Style()
+style.theme_use("clam")
+style.configure("TNotebook", background="#f5f5f5", borderwidth=0)
+style.configure("TFrame", background="#f5f5f5")
+style.configure("TLabel", background="#f5f5f5", font=("Arial", 12))
+style.configure("TButton", font=("Arial", 12), padding=6)
+style.configure("TEntry", font=("Arial", 12))
+style.configure("TCombobox", font=("Arial", 12))
 
 notebook = ttk.Notebook(root)
-notebook.pack(expand=True, fill="both")
+notebook.pack(expand=True, fill="both", padx=10, pady=10)
 
 # Sekmeler
-frame1 = ttk.Frame(notebook)  
-frame2 = ttk.Frame(notebook)  
-frame3 = ttk.Frame(notebook)  
-frame4 = ttk.Frame(notebook)  
-frame5 = ttk.Frame(notebook)  
-frame6 = ttk.Frame(notebook) 
+frame1 = ttk.Frame(notebook, padding=20)  
+frame2 = ttk.Frame(notebook, padding=20)  
+frame3 = ttk.Frame(notebook, padding=20)  
+frame4 = ttk.Frame(notebook, padding=20)  
+frame5 = ttk.Frame(notebook, padding=20)  
+frame6 = ttk.Frame(notebook, padding=20) 
+frame7 = ttk.Frame(notebook, padding=20)
 
 notebook.add(frame1, text="Müşteri Sipariş Kontrol")
 notebook.add(frame2, text="Ürün Bul")
@@ -579,108 +649,108 @@ notebook.add(frame3, text="Depo Giriş")
 notebook.add(frame4, text="Müşteri Listesi")
 notebook.add(frame5, text="Sipariş Listesi")
 notebook.add(frame6, text="Ürün Listesi")
+notebook.add(frame7, text="Sorgular")
 
-form_container = tk.Frame(root)
+form_container = tk.Frame(root, bg="#f5f5f5")
 
 # === FRAME1: MÜŞTERİ SİPARİŞ KONTROL ===
-frame_left = tk.Frame(frame1, padx=10, pady=10)
-frame_left.pack(side="left", fill="y")
+frame_left = tk.Frame(frame1, padx=20, pady=20, bg="#ffffff", relief="groove", bd=2)
+frame_left.pack(side="left", fill="y", padx=10, pady=10)
 
 phone_var = tk.StringVar()
-tk.Label(frame_left, text="Telefon:").grid(row=0, column=0, sticky="w", pady=5)
-entry_phone = tk.Entry(frame_left, width=30, textvariable=phone_var)
-entry_phone.grid(row=0, column=1, pady=5)
+tk.Label(frame_left, text="Telefon:", anchor="w", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=0, column=0, sticky="w", pady=8)
+entry_phone = tk.Entry(frame_left, width=30, textvariable=phone_var, font=("Arial", 12))
+entry_phone.grid(row=0, column=1, pady=8)
 
+tk.Label(frame_left, text="Ad:", anchor="w", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=1, column=0, sticky="w", pady=8)
+entry_name = tk.Entry(frame_left, width=30, font=("Arial", 12))
+entry_name.grid(row=1, column=1, pady=8)
 
-tk.Label(frame_left, text="Ad:").grid(row=1, column=0, sticky="w", pady=5)
-entry_name = tk.Entry(frame_left, width=30)
-entry_name.grid(row=1, column=1, pady=5)
+tk.Label(frame_left, text="Soyad:", anchor="w", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=2, column=0, sticky="w", pady=8)
+entry_surname = tk.Entry(frame_left, width=30, font=("Arial", 12))
+entry_surname.grid(row=2, column=1, pady=8)
 
-tk.Label(frame_left, text="Soyad:").grid(row=2, column=0, sticky="w", pady=5)
-entry_surname = tk.Entry(frame_left, width=30)
-entry_surname.grid(row=2, column=1, pady=5)
-
-tk.Label(frame_left, text="İl:").grid(row=3, column=0, sticky="w", pady=5)
+tk.Label(frame_left, text="İl:", anchor="w", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=3, column=0, sticky="w", pady=8)
 combo_state = ttk.Combobox(frame_left, values=iller_list, state="readonly", width=27)
-combo_state.grid(row=3, column=1, pady=5)
+combo_state.grid(row=3, column=1, pady=8)
 combo_state.bind("<<ComboboxSelected>>", update_districts)
 
-tk.Label(frame_left, text="İlçe:").grid(row=4, column=0, sticky="w", pady=5)
+tk.Label(frame_left, text="İlçe:", anchor="w", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=4, column=0, sticky="w", pady=8)
 combo_district = ttk.Combobox(frame_left, values=[], state="readonly", width=27)
-combo_district.grid(row=4, column=1, pady=5)
+combo_district.grid(row=4, column=1, pady=8)
 
-tk.Label(frame_left, text="Adres:").grid(row=5, column=0, sticky="w", pady=5)
-entry_address = tk.Entry(frame_left, width=30)
-entry_address.grid(row=5, column=1, pady=5)
+tk.Label(frame_left, text="Adres:", anchor="w", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=5, column=0, sticky="w", pady=8)
+entry_address = tk.Entry(frame_left, width=30, font=("Arial", 12))
+entry_address.grid(row=5, column=1, pady=8)
 
-tk.Label(frame_left, text="Not:").grid(row=6, column=0, sticky="w", pady=5)
-entry_note = tk.Entry(frame_left, width=30)
-entry_note.grid(row=6, column=1, pady=5)
+tk.Label(frame_left, text="Not:", anchor="w", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=6, column=0, sticky="w", pady=8)
+entry_note = tk.Entry(frame_left, width=30, font=("Arial", 12))
+entry_note.grid(row=6, column=1, pady=8)
 
-btn_newCustomer = tk.Button(frame_left, text="Müşteri Kaydet", width=20, bg="#4CAF50", fg="white", command=newCustomer)
-btn_newCustomer.grid(row=7, column=0, columnspan=2, pady=10)
+btn_newCustomer = tk.Button(frame_left, text="Müşteri Kaydet", width=20, bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), command=newCustomer)
+btn_newCustomer.grid(row=7, column=0, columnspan=2, pady=12)
 
-btn_get = tk.Button(frame_left, text="Getir", width=20, bg="#4CAF50", fg="white", command=Get)
-btn_get.grid(row=8, column=0, columnspan=2, pady=10)
+btn_get = tk.Button(frame_left, text="Getir", width=20, bg="#2196F3", fg="white", font=("Arial", 12, "bold"), command=Get)
+btn_get.grid(row=8, column=0, columnspan=2, pady=12)
 
-btn_deleteOrder = tk.Button(frame_left, text="Seçili siparişi sil", width=20, bg="#4CAF50", fg="white", command=Delete)
-btn_deleteOrder.grid(row=9, column=0, columnspan=2, pady=10)
+btn_deleteOrder = tk.Button(frame_left, text="Seçili siparişi sil", width=20, bg="#FF9800", fg="white", font=("Arial", 12, "bold"), command=Delete)
+btn_deleteOrder.grid(row=9, column=0, columnspan=2, pady=12)
 
-btn_cargoBill = tk.Button(frame_left, text="Kargo Fişi Yazdır",width=20,bg="#4CAF50",fg="white")
-btn_cargoBill.grid(row=10, columnspan=2)
+btn_cargoBill = tk.Button(frame_left, text="Kargo Fişi Yazdır",width=20,bg="#9C27B0",fg="white",font=("Arial", 12, "bold"))
+btn_cargoBill.grid(row=10, columnspan=2, pady=12)
 btn_cargoBill.config(command=cargoBill)
 
 # Sipariş tablosu sağda
-frame_right = tk.Frame(frame1)
-frame_right.pack(side="right", fill="both", expand=True)
+frame_right = tk.Frame(frame1, bg="#f5f5f5")
+frame_right.pack(side="right", fill="both", expand=True, padx=10, pady=10)
 df_siparis = pd.read_sql_query("SELECT * FROM siparisler", conn_siparis)
 table_siparis1 = EditableTable(frame_right,dataframe=df_siparis, table_name="siparisler", id_column="siparis_id", conn=conn_siparis, showtoolbar=True, showstatusbar=True)
 table_siparis1.show()
 
 # === FRAME2: ÜRÜN BUL ===
-frame2_left = tk.Frame(frame2, padx=10, pady=10)
-frame2_left.pack(side="left", fill="y")
+frame2_left = tk.Frame(frame2, padx=20, pady=20, bg="#ffffff", relief="groove", bd=2)
+frame2_left.pack(side="left", fill="y", padx=10, pady=10)
 
-active_num = tk.Label(frame2_left, textvariable=phone_var)
-active_num.grid(row=0, column=0, columnspan=2, pady=10)
-tk.Label(frame2_left, text="Ürün Grubu:").grid(row=1, column=0, sticky="w", pady=5)
-entry_productGroup = tk.Entry(frame2_left, width=30)
-entry_productGroup.grid(row=1, column=1, pady=5)
+active_num = tk.Label(frame2_left, textvariable=phone_var, font=("Arial", 13, "bold"), bg="#ffffff")
+active_num.grid(row=0, column=0, columnspan=2, pady=12)
+tk.Label(frame2_left, text="Ürün Grubu:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=1, column=0, sticky="w", pady=8)
+entry_productGroup = tk.Entry(frame2_left, width=30, font=("Arial", 12))
+entry_productGroup.grid(row=1, column=1, pady=8)
 
-tk.Label(frame2_left, text="Ürün ID:").grid(row=2, column=0, sticky="w", pady=5)
-entry_productID = tk.Entry(frame2_left, width=30)
-entry_productID.grid(row=2, column=1, pady=5)
+tk.Label(frame2_left, text="Ürün ID:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=2, column=0, sticky="w", pady=8)
+entry_productID = tk.Entry(frame2_left, width=30, font=("Arial", 12))
+entry_productID.grid(row=2, column=1, pady=8)
 
-tk.Label(frame2_left, text="Kargo:").grid(row=3, column=0, sticky="w", pady=5)
-entry_ship = tk.Entry(frame2_left, width=30)
-entry_ship.grid(row=3, column=1, pady=5)
+tk.Label(frame2_left, text="Kargo:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=3, column=0, sticky="w", pady=8)
+entry_ship = tk.Entry(frame2_left, width=30, font=("Arial", 12))
+entry_ship.grid(row=3, column=1, pady=8)
 
-tk.Label(frame2_left, text="Adet:").grid(row=4, column=0, sticky="w", pady=5)
-entry_qty = tk.Entry(frame2_left, width=30)
-entry_qty.grid(row=4, column=1, pady=5)
+tk.Label(frame2_left, text="Adet:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=4, column=0, sticky="w", pady=8)
+entry_qty = tk.Entry(frame2_left, width=30, font=("Arial", 12))
+entry_qty.grid(row=4, column=1, pady=8)
 
-tk.Label(frame2_left, text="Ödeme:").grid(row=5, column=0, sticky="w", pady=5)
-entry_payment = tk.Entry(frame2_left, width=30)
-entry_payment.grid(row=5, column=1, pady=5)
+tk.Label(frame2_left, text="Ödeme:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=5, column=0, sticky="w", pady=8)
+entry_payment = tk.Entry(frame2_left, width=30, font=("Arial", 12))
+entry_payment.grid(row=5, column=1, pady=8)
 
-tk.Label(frame2_left, text="Durum:").grid(row=6, column=0, sticky="w", pady=5)
+tk.Label(frame2_left, text="Durum:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=6, column=0, sticky="w", pady=8)
 combobox_status = ttk.Combobox(frame2_left, 
     values=["Sipariş verildi", "Hazırlanıyor", "Kargoya verildi", "Teslim edildi"],
     state="readonly", width=27)
-combobox_status.grid(row=6, column=1, pady=5)
+combobox_status.grid(row=6, column=1, pady=8)
 combobox_status.set("Sipariş verildi")
 
-btn_get2 = tk.Button(frame2_left, text="Ürünü Getir", width=20, bg="#4CAF50", fg="white", command=GetProduct)
-btn_get2.grid(row=7, column=0, columnspan=2, pady=10)
+btn_get2 = tk.Button(frame2_left, text="Ürünü Getir", width=20, bg="#2196F3", fg="white", font=("Arial", 12, "bold"), command=GetProduct)
+btn_get2.grid(row=7, column=0, columnspan=2, pady=12)
 
-btn_add = tk.Button(frame2_left, text="Seçili Müşteriye Siparişi Ekle", width=25, bg="#4CAF50", fg="white", command=Add)
-btn_add.grid(row=8, column=0, columnspan=2, pady=10)
+btn_add = tk.Button(frame2_left, text="Seçili Müşteriye Siparişi Ekle", width=25, bg="#4CAF50", fg="white", font=("Arial", 12, "bold"), command=Add)
+btn_add.grid(row=8, column=0, columnspan=2, pady=12)
 
-image_box = tk.Label(frame2_left, width=50,height=50)
-image_box.grid(row=9, column=0, columnspan=2, pady=10)
-# Ürün tablosu sağda
-frame2_table = tk.Frame(frame2)
-frame2_table.pack(side="right", fill="both", expand=True)
+image_box = tk.Label(frame2_left, width=50,height=50, bg="#eeeeee", relief="ridge")
+image_box.grid(row=9, column=0, columnspan=2, pady=12)
+
+frame2_table = tk.Frame(frame2, bg="#f5f5f5")
+frame2_table.pack(side="right", fill="both", expand=True, padx=10, pady=10)
 df_urun = pd.read_sql_query("SELECT * FROM urunler", conn_urun)
 df_urun.drop(columns=["resim"], inplace=True)
 table_urun2 = EditableTable(frame2_table, dataframe=df_urun, table_name="urunler", id_column="urunid", conn=conn_urun ,showtoolbar=True, showstatusbar=True)
@@ -688,48 +758,51 @@ table_urun2.show()
 table_urun2.bind("<ButtonRelease-1>", on_row_selected)
 
 # === FRAME3: DEPO GİRİŞ ===
-tk.Label(frame3, text="Ürün ID:").grid(row=0, column=0, sticky="w", padx=5, pady=5)
-entry_stock_id = tk.Entry(frame3, width=30)
-entry_stock_id.grid(row=0, column=1, padx=10, pady=5)
+frame3_table = tk.Frame(frame3, padx=20, pady=20, bg="#ffffff", relief="groove", bd=2)
+frame3_table.pack(fill="both", expand=True, padx=10, pady=10)
+for i in range(6):
+    frame3_table.grid_columnconfigure(i, weight=1)
+tk.Label(frame3_table, text="Ürün ID:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=0, column=0, sticky="w", padx=5, pady=8)
+entry_stock_id = tk.Entry(frame3_table, width=30, font=("Arial", 12))
+entry_stock_id.grid(row=0, column=1, padx=10, pady=8)
 
-tk.Label(frame3, text="Ürün Grubu:").grid(row=1, column=0, sticky="w", padx=5, pady=5)
-entry_stock_group = tk.Entry(frame3, width=30)
-entry_stock_group.grid(row=1, column=1, padx=10, pady=5)
+tk.Label(frame3_table, text="Ürün Grubu:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=1, column=0, sticky="w", padx=5, pady=8)
+entry_stock_group = tk.Entry(frame3_table, width=30, font=("Arial", 12))
+entry_stock_group.grid(row=1, column=1, padx=10, pady=8)
 
-tk.Label(frame3, text="Ürün Model:").grid(row=2, column=0, sticky="w", padx=5, pady=5)
-entry_stock_model = tk.Entry(frame3, width=30)
-entry_stock_model.grid(row=2, column=1, padx=10, pady=5)
+tk.Label(frame3_table, text="Ürün Model:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=2, column=0, sticky="w", padx=5, pady=8)
+entry_stock_model = tk.Entry(frame3_table, width=30, font=("Arial", 12))
+entry_stock_model.grid(row=2, column=1, padx=10, pady=8)
 
-tk.Label(frame3, text="Ağırlık:").grid(row=0, column=2, sticky="w", padx=5, pady=5)
-entry_stock_mass = tk.Entry(frame3, width=30)
-entry_stock_mass.grid(row=0, column=3, padx=10, pady=5)
+tk.Label(frame3_table, text="Ağırlık:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=0, column=2, sticky="w", padx=5, pady=8)
+entry_stock_mass = tk.Entry(frame3_table, width=30, font=("Arial", 12))
+entry_stock_mass.grid(row=0, column=3, padx=10, pady=8)
 
-tk.Label(frame3, text="Geliş Fiyatı TL:").grid(row=1, column=2, sticky="w", padx=5, pady=5)
-entry_stock_tl = tk.Entry(frame3, width=30)
-entry_stock_tl.grid(row=1, column=3, padx=10, pady=5)
+tk.Label(frame3_table, text="Geliş Fiyatı TL:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=1, column=2, sticky="w", padx=5, pady=8)
+entry_stock_tl = tk.Entry(frame3_table, width=30, font=("Arial", 12))
+entry_stock_tl.grid(row=1, column=3, padx=10, pady=8)
 
-#otomatikleştir.
-tk.Label(frame3, text="Geliş Fiyatı USD:").grid(row=2, column=2, sticky="w", padx=5, pady=5)
-entry_stock_usdf = tk.Entry(frame3, width=30)
-entry_stock_usdf.grid(row=2, column=3, padx=10, pady=5)
+tk.Label(frame3_table, text="Geliş Fiyatı USD:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=2, column=2, sticky="w", padx=5, pady=8)
+entry_stock_usdf = tk.Entry(frame3_table, width=30, font=("Arial", 12))
+entry_stock_usdf.grid(row=2, column=3, padx=10, pady=8)
 
-tk.Label(frame3, text="Adet:").grid(row=0, column=4, sticky="w", padx=5, pady=5)
-entry_stock_qty = tk.Entry(frame3, width=30)
-entry_stock_qty.grid(row=0, column=5, padx=10, pady=5)
+tk.Label(frame3_table, text="Adet:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=0, column=4, sticky="w", padx=5, pady=8)
+entry_stock_qty = tk.Entry(frame3_table, width=30, font=("Arial", 12))
+entry_stock_qty.grid(row=0, column=5, padx=10, pady=8)
 
-tk.Label(frame3, text="Güncel Maliyet:").grid(row=1, column=4, sticky="w", padx=5, pady=5)
-entry_stock_cost = tk.Entry(frame3, width=30)
-entry_stock_cost.grid(row=1, column=5, padx=10, pady=5)
+tk.Label(frame3_table, text="Güncel Maliyet:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=1, column=4, sticky="w", padx=5, pady=8)
+entry_stock_cost = tk.Entry(frame3_table, width=30, font=("Arial", 12))
+entry_stock_cost.grid(row=1, column=5, padx=10, pady=8)
 
-tk.Label(frame3, text="Satış Fiyatı TL:").grid(row=2, column=4, sticky="w", padx=5, pady=5)
-entry_stock_price = tk.Entry(frame3, width=30)
-entry_stock_price.grid(row=2, column=5, padx=10, pady=5)
+tk.Label(frame3_table, text="Satış Fiyatı TL:", font=("Arial", 13, "bold"), bg="#ffffff").grid(row=2, column=4, sticky="w", padx=5, pady=8)
+entry_stock_price = tk.Entry(frame3_table, width=30, font=("Arial", 12))
+entry_stock_price.grid(row=2, column=5, padx=10, pady=8)
 
-btn_choose_img = tk.Button(frame3, text="Resim Seç",width=20, bg="#4CAF50", fg="white", command=img_to_bytes)
-btn_choose_img.grid(row=0, column=6, padx=10, pady=10)
+btn_choose_img = tk.Button(frame3_table, text="Resim Seç",width=20, bg="#2196F3", fg="white", font=("Arial", 12, "bold"), command=img_to_bytes)
+btn_choose_img.grid(row=0, column=6, padx=10, pady=8)
 
-btn_add_stock = tk.Button(frame3,text="Stok girişini yap",width=20,bg="#4CAF50",fg="white",command=Add_stock)
-btn_add_stock.grid(row=4,column=0,padx=10,pady=10)
+btn_add_stock = tk.Button(frame3_table,text="Stok girişini yap",width=20,bg="#4CAF50",fg="white",font=("Arial", 12, "bold"),command=Add_stock)
+btn_add_stock.grid(row=4,column=0,padx=10,pady=12)
 
 # === FRAME4: MÜŞTERİ TABLOSU ===
 frame4_table = tk.Frame(frame4)
@@ -754,5 +827,21 @@ table_urun = EditableTable(frame6_table, dataframe=df_urun, table_name="urunler"
 table_urun.show()
 phone_var.trace("w", on_text_change)
 
+# === FRAME7: SORGULAR ===
+sql_entry = tk.Text(frame7, height=4, width=80)
+sql_entry.pack(padx=10, pady=5)
+databases ={
+    "Ürünler": "urunler.db",
+    "Müşteriler": "musteriler.db",
+    "Siparişler": "siparisler.db"
+}
+db_var = tk.StringVar(value=list(databases.keys())[0])
+sql_combo = ttk.Combobox(frame7, textvariable=db_var)
+sql_combo.pack(padx=10, pady=10)
+sql_button = tk.Button(frame7, text="Çalıştır", command=run_query)
+sql_button.pack(pady=5)
+
+tree = ttk. Treeview(frame7, show="headings")
+tree.pack(anchor="s", fill="both", padx=10, pady=10)
 
 root.mainloop()
