@@ -14,6 +14,7 @@ from fpdf import FPDF
 import datetime
 from datetime import datetime
 
+
 # === ÖN AYARLAR ===
 url = "https://www.tcmb.gov.tr/kurlar/today.xml"
 base_path = os.path.dirname(os.path.abspath(__file__))
@@ -190,6 +191,7 @@ def Add():
         cur_musteri.execute("SELECT telefon, il, ilce, adres FROM musteriler WHERE telefon = ?", (phone_number,))
         musteri = cur_musteri.fetchone()
         if not musteri:
+            write_log(f"Müşteri Bulunamadı - Aranan Telefon - {telefon}, Ürün ID: {urunid}")
             messagebox.showerror("Hata", "Bu telefon numarasına ait müşteri bulunmamaktadır.")
             return
         telefon, il, ilce, adres = musteri
@@ -236,6 +238,7 @@ def Add():
         cursor.execute("SELECT stok FROM urunler WHERE urunid = ?", (urunid,))
         stok = cursor.fetchone()
         if not stok or stok[0] < qty:
+            write_log(f"Stok Yetersiz - Telefon - {telefon}, Ürün ID: {urunid} - ADET: {qty} - STOK ADETİ:{stok[0]} ")
             messagebox.showerror("Hata", "Yeterli stok bulunmamaktadır.")
             return
 
@@ -262,9 +265,11 @@ def Add():
         conn_urun.commit()
         refresh_all_tables()
         messagebox.showinfo("Başarılı", "Ürün müşterinin siparişlerine eklendi.")
+        write_log(f"Sipariş Eklendi - Telefon: {telefon}, Ürün ID: {urunid}, Adet: {qty}")
 
     except Exception as e:
         messagebox.showerror("Hata", str(e))
+        write_log(f"Sipariş Eklenmeye Çalışıldı - Hata {str(e)} Telefon - {telefon}, Ürün ID: {urunid}")
 
 def Delete():
     global table_siparis1
@@ -283,13 +288,14 @@ def Delete():
         # Veritabanından sil
         cur_siparis.execute("DELETE FROM siparisler WHERE siparis_id = ?", (siparis_id,))
         conn_siparis.commit()
-
+        write_log(f"Sipariş Silindi - Sipariş ID: {siparis_id}")
         messagebox.showinfo("Başarılı", f"Sipariş (ID: {siparis_id}) silindi.")
 
         # Tabloyu güncelle
         Get()
         refresh_all_tables()
     except Exception as e:
+        write_log(f"Sipariş Silinemedi - Hata {str(e)} Sipariş ID: {siparis_id}")
         messagebox.showerror("Hata", str(e))
 
 def newCustomer():
@@ -311,6 +317,7 @@ def newCustomer():
         """, (Name, Surname, phone_number, state, district, address, note))
         conn_musteri.commit()
 
+        write_log(f"Yeni Müşteri Eklendi - Telefon: {phone_number}, Ad Soyad: {Name} {Surname}.")
         messagebox.showinfo("Başarılı", "Müşteri kaydı başarıyla eklendi.")
         
         entry_name.delete(0, tk.END)
@@ -321,8 +328,10 @@ def newCustomer():
         combo_state.set("")
         combo_district.set("")
     except sqlite3.IntegrityError:
+        write_log(f"Aynı Telefon Numarasıyla Müşteri Eklenmeye Çalışıldı - Telefon: {phone_number}")
         messagebox.showerror("Hata", "Bu telefon numarası zaten kayıtlı.")
     except Exception as e:
+        write_log(f"Müşteri Ekleme Başarısız - Hata: {str(e)} Telefon: {phone_number}")
         messagebox.showerror("Hata", str(e))
     finally:
         refresh_all_tables()
@@ -392,8 +401,10 @@ class EditableTable(Table):
             sql_query = f"UPDATE {self.table_name} SET {col_name} = ? WHERE {self.id_column} = ?"
             self.cursor.execute(sql_query, (new_value, record_id))
             self.conn.commit()
+            write_log(f"Tablo Güncellendi - Tablo: {self.table_name}, ID: {record_id}, Kolon: {col_name}, Yeni Değer: {new_value}, Eski Değer: {old_value}")
             messagebox.showinfo("Başarılı", f"{self.table_name} tablosu güncellendi.")
         except Exception as e:
+            write_log(f"Tablo Güncellenemedi - Hata: {str(e)} Tablo: {self.table_name}, ID: {record_id}, Kolon: {col_name}, Yeni Değer: {new_value}, Eski Değer: {old_value}")
             messagebox.showerror("Hata", str(e))
 
 def Add_stock():
@@ -453,6 +464,7 @@ def Add_stock():
                 yeni_veri["urunid"]
             ))
             conn_urun.commit()
+            write_log(f"Stok Güncellendi - Yeni Veriler: [Ürün ID: {stock_id}  Adet: {stock_qty}, Fiyat: {fiyat}, Model: {stock_model}, Grup: {stock_group}, Ağırlık: {stock_mass}, Resim: {image_path}] - Eski Veriler: [{eski_veri}]")
             messagebox.showinfo("Başarılı", f"Stok güncellendi. Yeni stok: {yeni_veri['stok']}")
 
         else:
@@ -463,11 +475,14 @@ def Add_stock():
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """, (stock_id, stock_group, stock_model, stock_qty, stock_mass, fiyat, image_path, date))
             conn_urun.commit()
+            write_log(f"Yeni Stok Eklendi - Bilgiler [Ürün ID: {stock_id}, Adet: {stock_qty}, Fiyat: {fiyat}, Model: {stock_model}, Grup: {stock_group}, Ağırlık: {stock_mass}, Resim: {image_path}]")
             messagebox.showinfo("Başarılı", "Yeni ürün eklendi.")
 
     except ValueError:
+        write_log(f"Stok Eklenemedi/Güncellenemedi - Hata: {str(e)} Ürün ID: {stock_id}")
         messagebox.showerror("Hata", "Lütfen stok ve fiyat değerlerini doğru giriniz.")
     except Exception as e:
+        write_log(f"Stok Eklenemedi/Güncellenemedi - Hata: {str(e)} Ürün ID: {stock_id}")
         messagebox.showerror("Hata", str(e))
     finally:
         entry_stock_id.delete(0, tk.END)
@@ -555,9 +570,9 @@ def cargoBill():
     tk.Label(container, text="Ürün:", bg="white", font=("Arial", 20)).grid(row=4, column=0, sticky="w")
     tk.Label(container, text=result[5], bg="white", font=("Arial", 20)).grid(row=4, column=1, sticky="w")
 
-    tk.Button(new_Form, text="Yazdır", bg="#4CAF50", fg="white", font=("Arial", 16), command=lambda: print_cargo_bill(musteri_ad, musteri_soyad, musteri_adres, musteri_tel, result[5], urun_resmi)).pack(pady=20)
+    tk.Button(new_Form, text="Yazdır", bg="#4CAF50", fg="white", font=("Arial", 16), command=lambda: print_cargo_bill(musteri_ad, musteri_soyad, musteri_adres, musteri_tel, result[5], urun_resmi, siparis_id)).pack(pady=20)
 
-def print_cargo_bill(musteri_ad, musteri_soyad, musteri_adres, musteri_tel, urun, urun_resmi):
+def print_cargo_bill(musteri_ad, musteri_soyad, musteri_adres, musteri_tel, urun, urun_resmi, siparis_id):
     try:
         
         pdf = FPDF("p", "mm", "A4")
@@ -577,8 +592,9 @@ def print_cargo_bill(musteri_ad, musteri_soyad, musteri_adres, musteri_tel, urun
         if urun_resmi[0] != None:
             pdf.image(f"{urun_resmi[0]}")
         pdf.output("deneme.pdf")
-
+        write_log(f"Kargo Fişi Yazdırıldı - Müşteri: {musteri_ad} {musteri_soyad}, Telefon: {musteri_tel}, Sipariş ID: {siparis_id}")
     except Exception as e:
+        write_log(f"Kargo Fişi Yazdırılamadı - Hata: {str(e)} Müşteri: {musteri_ad} {musteri_soyad}, Telefon: {musteri_tel}, Sipariş ID: {siparis_id}")
         messagebox.showerror("Hata", str(e))
 
 def run_query():
@@ -616,6 +632,10 @@ def run_query():
 
     except Exception as e:
         messagebox.showerror("SQL Hatası", str(e))
+
+def write_log(message):
+    with open("app.log",  "a", encoding="utf-8") as log_file:
+        log_file.write(f"{datetime.now()} - {message} \n")
 # === ANA EKRAN ===
 root = tk.Tk()
 root.title("Müşteri / Sipariş Yönetim Sistemi")

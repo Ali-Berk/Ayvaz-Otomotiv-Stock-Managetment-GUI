@@ -205,3 +205,12 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+app.log.txt
+cargoBill.pdf
+deneme.pdf
+musteriler.db
+siparisler.db
+urunler.db
+TXT.txt
+urun_resimleri/*
